@@ -2,77 +2,350 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Regenerar extensión - SMGR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Regenerar extensión - SMGR Telmex | Avaya</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #222; }
-  h2 { margin-bottom: 4px; }
-  .sub { color: #666; margin-top: 0; }
-  fieldset { border: 1px solid #ddd; border-radius: 8px; padding: 16px 20px; margin: 16px 0; }
-  legend { padding: 0 6px; font-weight: 600; color: #444; }
-  label { display: block; margin: 10px 0 4px; font-size: 14px; font-weight: 500; }
-  input[type=text], input[type=file] { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
-  input[readonly] { background: #f3f3f3; color: #555; }
-  .ext-display { padding: 9px 8px; border: 1px dashed #ccc; border-radius: 6px; font-size: 14px; color: #444; background: #fafafa; min-height: 18px; }
-  .row { display: flex; gap: 12px; }
-  .row > div { flex: 1; }
-  button { margin-top: 20px; padding: 12px 22px; font-size: 15px; font-weight: 600; border: none; border-radius: 8px; background: #c8102e; color: white; cursor: pointer; }
-  button:disabled { background: #ccc; cursor: default; }
-  #detectMsg { margin-top: 8px; padding: 8px 12px; border-radius: 6px; font-size: 13px; display: none; }
-  #detectMsg.ok { background: #e6f4ea; color: #1e7a34; display: block; }
-  #detectMsg.err { background: #fdeaea; color: #a11; display: block; }
-  #detectMsg.wait { background: #eef2fb; color: #345; display: block; }
-  #status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 14px; white-space: pre-line; display: none; }
-  #status.ok { background: #e6f4ea; color: #1e7a34; display: block; }
-  #status.err { background: #fdeaea; color: #a11; display: block; }
-  #status.info { background: #eef2fb; color: #345; display: block; }
-  small.hint { color: #888; }
+  :root {
+    --avaya-red: #DA291C;
+    --avaya-red-hover: #B81F14;
+    --avaya-cyan: #00C4CC;
+    --avaya-dark: #1E2229;
+    --avaya-gray-bg: #F8FAFC;
+    --avaya-card-bg: #FFFFFF;
+    --avaya-border: #E2E8F0;
+    --avaya-text-muted: #64748B;
+  }
+
+  * { 
+    box-sizing: border-box; 
+  }
+
+  body { 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--avaya-gray-bg);
+    background-image: 
+      radial-gradient(circle at 90% 10%, rgba(0, 196, 204, 0.08) 0%, transparent 40%),
+      radial-gradient(circle at 10% 90%, rgba(218, 41, 28, 0.05) 0%, transparent 40%);
+    background-attachment: fixed;
+    color: var(--avaya-dark);
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+  }
+
+  header {
+    background: #ffffff;
+    border-bottom: 1px solid var(--avaya-border);
+    padding: 16px 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  .logo-container {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .logo-img {
+    height: 24px;
+    width: auto;
+    display: block;
+  }
+
+  .logo-tag {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--avaya-text-muted);
+    text-transform: uppercase;
+    border-left: 2px solid #CBD5E1;
+    padding-left: 14px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+  }
+
+  .container {
+    max-width: 680px;
+    margin: 40px auto;
+    padding: 0 20px 60px;
+  }
+
+  .hero-header {
+    margin-bottom: 28px;
+  }
+
+  h2 { 
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--avaya-dark);
+    margin: 0 0 8px 0;
+    letter-spacing: -0.5px;
+  }
+
+  .sub { 
+    color: var(--avaya-text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  fieldset { 
+    border: 1px solid var(--avaya-border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 20px 0;
+    background: var(--avaya-card-bg);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    transition: box-shadow 0.2s ease;
+  }
+
+  fieldset:hover {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+  }
+
+  legend { 
+    padding: 4px 12px;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    color: var(--avaya-dark);
+    background: #F1F5F9;
+    border-radius: 6px;
+    border: 1px solid #E2E8F0;
+    text-transform: uppercase;
+  }
+
+  label { 
+    display: block;
+    margin: 12px 0 6px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #334155;
+  }
+
+  input[type=text], input[type=file] { 
+    width: 100%;
+    box-sizing: border-box;
+    padding: 11px 14px;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    font-size: 14px;
+    background-color: #FFFFFF;
+    color: var(--avaya-dark);
+    transition: all 0.2s ease;
+  }
+
+  input[type=text]:focus {
+    outline: none;
+    border-color: var(--avaya-cyan);
+    box-shadow: 0 0 0 3px rgba(0, 196, 204, 0.2);
+  }
+
+  input[type=file] {
+    padding: 9px 12px;
+    cursor: pointer;
+    background: #F8FAFC;
+  }
+
+  input[readonly] { 
+    background: #F1F5F9;
+    color: #64748B;
+  }
+
+  .ext-display { 
+    padding: 11px 14px;
+    border: 1px dashed #CBD5E1;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #475569;
+    background: #F8FAFC;
+    min-height: 20px;
+    font-weight: 600;
+  }
+
+  .row { 
+    display: flex;
+    gap: 16px;
+  }
+
+  .row > div { 
+    flex: 1;
+  }
+
+  button { 
+    width: 100%;
+    margin-top: 24px;
+    padding: 14px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    background: var(--avaya-red);
+    color: white;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(218, 41, 28, 0.25);
+    transition: all 0.2s ease;
+  }
+
+  button:hover:not(:disabled) {
+    background: var(--avaya-red-hover);
+    box-shadow: 0 6px 16px rgba(218, 41, 28, 0.35);
+    transform: translateY(-1px);
+  }
+
+  button:disabled { 
+    background: #CBD5E1;
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+
+  #detectMsg { 
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    display: none;
+  }
+
+  #detectMsg.ok { 
+    background: #F0FDF4;
+    color: #15803D;
+    border: 1px solid #BBF7D0;
+    display: block;
+  }
+
+  #detectMsg.err { 
+    background: #FEF2F2;
+    color: #B91C1C;
+    border: 1px solid #FECACA;
+    display: block;
+  }
+
+  #detectMsg.wait { 
+    background: #F0F9FF;
+    color: #0369A1;
+    border: 1px solid #BAE6FD;
+    display: block;
+  }
+
+  #status { 
+    margin-top: 20px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-line;
+    display: none;
+  }
+
+  #status.ok { 
+    background: #F0FDF4;
+    color: #15803D;
+    border: 1px solid #BBF7D0;
+    display: block;
+  }
+
+  #status.err { 
+    background: #FEF2F2;
+    color: #B91C1C;
+    border: 1px solid #FECACA;
+    display: block;
+  }
+
+  #status.info { 
+    background: #F0F9FF;
+    color: #0369A1;
+    border: 1px solid #BAE6FD;
+    display: block;
+  }
+
+  small.hint { 
+    display: block;
+    margin-top: 8px;
+    color: var(--avaya-text-muted);
+    font-size: 12.5px;
+  }
+
+  @media (max-width: 600px) {
+    .row {
+      flex-direction: column;
+      gap: 0;
+    }
+  }
 </style>
 </head>
 <body>
 
-<h2>Regenerar extensión para SMGR Telmex</h2>
-<p class="sub">Trabaja directo sobre el archivo <b>crudo</b> descargado de SMGR (sin pasar por Excel ni Google Sheets). Solo cambia el texto indicado, todo lo demás queda exactamente igual.</p>
-
-<fieldset>
-  <legend>1. Archivo</legend>
-  <label for="fileInput">Archivo .xlsx descargado de SMGR (sin editar)</label>
-  <input type="file" id="fileInput" accept=".xlsx" />
-  <div id="detectMsg"></div>
-</fieldset>
-
-<fieldset>
-  <legend>2. Extensión</legend>
-  <div class="row">
-    <div>
-      <label>Extensión a Modificar (detectada del archivo)</label>
-      <div id="extViejaDisplay" class="ext-display">Sube el archivo primero</div>
-    </div>
-    <div>
-      <label for="extNueva">Extensión NUEVA</label>
-      <input type="text" id="extNueva" placeholder="3302007" />
-    </div>
+<header>
+  <div class="logo-container">
+    <svg class="logo-img" viewBox="0 0 213 32" xmlns="http://www.w3.org/2000/svg">
+      <g fill="#DA291C">
+        <polygon points="0,32 18,0 26,0 44,32 35,32 30,22 14,22 9,32"/>
+        <polygon points="17,14 22,5 27,14" fill="#ffffff"/>
+        <polygon points="43,0 52,0 66,24 80,0 89,0 71,32 61,32"/>
+        <polygon points="85,32 103,0 111,0 129,32 120,32 115,22 99,22 94,32"/>
+        <polygon points="102,14 107,5 112,14" fill="#ffffff"/>
+        <polygon points="127,0 136,0 150,20 164,0 173,0 155,24 155,32 145,32 145,24"/>
+        <polygon points="169,32 187,0 195,0 213,32 204,32 199,22 183,22 178,32"/>
+        <polygon points="186,14 191,5 196,14" fill="#ffffff"/>
+      </g>
+    </svg>
+    <span class="logo-tag">SMGR Utility</span>
   </div>
-  <small class="hint">La extensión a modificar se lee sola de la hoja "Handle" del archivo, así no hay riesgo de escribirla mal.</small>
-</fieldset>
+</header>
 
-<fieldset>
-  <legend>3. Passwords (Estos datos son automaticos)</legend>
-  <div class="row">
-    <div>
-      <label for="pass1">Password</label>
-      <input type="text" id="pass1" value="Avaya123$" />
-    </div>
-    <div>
-      <label for="pass2">Communication Password</label>
-      <input type="text" id="pass2" value="123456" />
-    </div>
+<div class="container">
+  <div class="hero-header">
+    <h2>Regenerar extensión para SMGR Telmex</h2>
+    <p class="sub">Trabaja directo sobre el archivo <b>crudo</b> descargado de SMGR (sin pasar por Excel ni Google Sheets). Solo cambia el texto indicado, todo lo demás queda exactamente igual.</p>
   </div>
-  <small class="hint">Se escriben en Basic!J11 y Basic!K11. Cambia estos campos si el template llega a usar otras celdas.</small>
-</fieldset>
 
-<button id="processBtn" disabled>Generar archivo para SMGR</button>
-<div id="status"></div>
+  <fieldset>
+    <legend>1. Archivo</legend>
+    <label for="fileInput">Archivo .xlsx descargado de SMGR (sin editar)</label>
+    <input type="file" id="fileInput" accept=".xlsx" />
+    <div id="detectMsg"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>2. Extensión</legend>
+    <div class="row">
+      <div>
+        <label>Extensión a Modificar (detectada del archivo)</label>
+        <div id="extViejaDisplay" class="ext-display">Sube el archivo primero</div>
+      </div>
+      <div>
+        <label for="extNueva">Extensión NUEVA</label>
+        <input type="text" id="extNueva" placeholder="3302007" />
+      </div>
+    </div>
+    <small class="hint">La extensión a modificar se lee sola de la hoja "Handle" del archivo, así no hay riesgo de escribirla mal.</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>3. Passwords (Estos datos son automáticos)</legend>
+    <div class="row">
+      <div>
+        <label for="pass1">Password</label>
+        <input type="text" id="pass1" value="Avaya123$" />
+      </div>
+      <div>
+        <label for="pass2">Communication Password</label>
+        <input type="text" id="pass2" value="123456" />
+      </div>
+    </div>
+    <small class="hint">Se escriben en Basic!J11 y Basic!K11. Cambia estos campos si el template llega a usar otras celdas.</small>
+  </fieldset>
+
+  <button id="processBtn" disabled>Generar archivo para SMGR</button>
+  <div id="status"></div>
+</div>
 
 <script>
 const TEXT_EXT = ['.xml', '.rels', '.vml'];
