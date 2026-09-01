@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Regenerar extensión - SMGR</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #666; margin-top: 0; }
+  fieldset { border: 1px solid #ddd; border-radius: 8px; padding: 16px 20px; margin: 16px 0; }
+  legend { padding: 0 6px; font-weight: 600; color: #444; }
+  label { display: block; margin: 10px 0 4px; font-size: 14px; font-weight: 500; }
+  input[type=text], input[type=file] { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button { margin-top: 20px; padding: 12px 22px; font-size: 15px; font-weight: 600; border: none; border-radius: 8px; background: #c8102e; color: white; cursor: pointer; }
+  button:disabled { background: #ccc; cursor: default; }
+  #status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 14px; white-space: pre-line; display: none; }
+  #status.ok { background: #e6f4ea; color: #1e7a34; display: block; }
+  #status.err { background: #fdeaea; color: #a11; display: block; }
+  #status.info { background: #eef2fb; color: #345; display: block; }
+  small.hint { color: #888; }
+</style>
+</head>
+<body>
+
+<h2>Regenerar extensión para SMGR</h2>
+<p class="sub">Trabaja directo sobre el archivo <b>crudo</b> descargado de SMGR (sin pasar por Excel ni Google Sheets). Solo cambia el texto indicado, todo lo demás queda exactamente igual.</p>
+
+<fieldset>
+  <legend>1. Archivo</legend>
+  <label for="fileInput">Archivo .xlsx descargado de SMGR (sin editar)</label>
+  <input type="file" id="fileInput" accept=".xlsx" />
+</fieldset>
+
+<fieldset>
+  <legend>2. Extensión</legend>
+  <div class="row">
+    <div>
+      <label for="extVieja">Extensión VIEJA (la que trae el archivo)</label>
+      <input type="text" id="extVieja" placeholder="15301006" />
+    </div>
+    <div>
+      <label for="extNueva">Extensión NUEVA</label>
+      <input type="text" id="extNueva" placeholder="3302007" />
+    </div>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>3. Passwords (fijos, ya vienen cargados)</legend>
+  <div class="row">
+    <div>
+      <label for="pass1">Password</label>
+      <input type="text" id="pass1" value="Avaya123$" />
+    </div>
+    <div>
+      <label for="pass2">Communication Password</label>
+      <input type="text" id="pass2" value="123456" />
+    </div>
+  </div>
+  <small class="hint">Se escriben en Basic!J11 y Basic!K11. Cambia estos campos si el template llega a usar otras celdas.</small>
+</fieldset>
+
+<button id="processBtn">Generar archivo para SMGR</button>
+<div id="status"></div>
+
+<script>
+const TEXT_EXT = ['.xml', '.rels', '.vml'];
+
+function isTextFile(name) {
+  const lower = name.toLowerCase();
+  return TEXT_EXT.some(ext => lower.endsWith(ext));
+}
+
+function xmlEscape(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// --- reemplazo global de texto ---
+async function applyTextReplacements(zip, pairs) {
+  const counts = {};
+  pairs.forEach(([oldV]) => counts[oldV] = 0);
+
+  const names = Object.keys(zip.files).filter(n => !zip.files[n].dir && isTextFile(n));
+  for (const name of names) {
+    let text = await zip.file(name).async('string');
+    let changed = false;
+    for (const [oldV, newV] of pairs) {
+      if (oldV && text.includes(oldV)) {
+        const parts = text.split(oldV);
+        counts[oldV] += parts.length - 1;
+        text = parts.join(newV);
+        changed = true;
+      }
+    }
+    if (changed) zip.file(name, text);
+  }
+  return counts;
+}
+
+// --- helpers para fijar celdas ---
+function getSheetTarget(workbookXml, relsXml, sheetName) {
+  const sheetRe = new RegExp(`<sheet\\b[^>]*\\bname="${sheetName}"[^>]*/>`);
+  const m = workbookXml.match(sheetRe);
+  if (!m) return null;
+  const ridM = m[0].match(/r:id="([^"]+)"/);
+  if (!ridM) return null;
+  const rid = ridM[1];
+  const relRe = new RegExp(`<Relationship Id="${rid}"[^>]*Target="([^"]+)"`);
+  const m2 = relsXml.match(relRe);
+  if (!m2) return null;
+  let target = m2[1];
+  if (!target.startsWith('worksheets/')) target = 'worksheets/' + target;
+  return 'xl/' + target;
+}
+
+function getOrCreateSharedStringIndex(sharedStringsXml, value) {
+  const items = [...sharedStringsXml.matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m => m[1]);
+  const plain = items.map(it => it.replace(/<[^>]+>/g, ''));
+  const existing = plain.indexOf(value);
+  if (existing !== -1) return { xml: sharedStringsXml, index: existing };
+
+  const newSi = `<si><t xml:space="preserve">${xmlEscape(value)}</t></si>`;
+  const insertAt = sharedStringsXml.lastIndexOf('</sst>');
+  let newXml = sharedStringsXml.slice(0, insertAt) + newSi + sharedStringsXml.slice(insertAt);
+
+  const ucM = newXml.match(/uniqueCount="(\d+)"/);
+  if (ucM) {
+    const newUnique = parseInt(ucM[1], 10) + 1;
+    newXml = newXml.slice(0, ucM.index) + `uniqueCount="${newUnique}"` + newXml.slice(ucM.index + ucM[0].length);
+  }
+  return { xml: newXml, index: items.length };
+}
+
+function setCellValue(sheetXml, coord, stringIndex) {
+  const cellRe = new RegExp(`<c r="${coord}"([^>]*?)(/>|>[\\s\\S]*?</c>)`);
+  const m = sheetXml.match(cellRe);
+  if (!m) return { xml: sheetXml, ok: false };
+  let attrs = m[1];
+  if (attrs.includes('t="')) {
+    attrs = attrs.replace(/t="[^"]*"/, 't="s"');
+  } else {
+    attrs = attrs + ' t="s"';
+  }
+  const newCell = `<c r="${coord}"${attrs}><v>${stringIndex}</v></c>`;
+  const newXml = sheetXml.slice(0, m.index) + newCell + sheetXml.slice(m.index + m[0].length);
+  return { xml: newXml, ok: true };
+}
+
+async function applyCellSets(zip, sets) {
+  const report = [];
+  let workbookXml = await zip.file('xl/workbook.xml').async('string');
+  let relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+  let sharedStringsXml = await zip.file('xl/sharedStrings.xml').async('string');
+
+  for (const { sheet, coord, value } of sets) {
+    const target = getSheetTarget(workbookXml, relsXml, sheet);
+    if (!target || !zip.files[target]) {
+      report.push(`AVISO: no se encontró la hoja "${sheet}" — se omite ${sheet}!${coord}`);
+      continue;
+    }
+    const ss = getOrCreateSharedStringIndex(sharedStringsXml, value);
+    sharedStringsXml = ss.xml;
+    let sheetXml = await zip.file(target).async('string');
+    const res = setCellValue(sheetXml, coord, ss.index);
+    if (!res.ok) {
+      report.push(`AVISO: la celda ${coord} no existe en "${sheet}" — se omite.`);
+      continue;
+    }
+    zip.file(target, res.xml);
+    report.push(`${sheet}!${coord} = "${value}"  (fijado)`);
+  }
+  zip.file('xl/sharedStrings.xml', sharedStringsXml);
+  return report;
+}
+
+document.getElementById('processBtn').addEventListener('click', async () => {
+  const status = document.getElementById('status');
+  status.className = '';
+  status.style.display = 'none';
+
+  const fileInput = document.getElementById('fileInput');
+  const extVieja = document.getElementById('extVieja').value.trim();
+  const extNueva = document.getElementById('extNueva').value.trim();
+  const pass1 = document.getElementById('pass1').value;
+  const pass2 = document.getElementById('pass2').value;
+
+  if (!fileInput.files.length) {
+    status.className = 'err'; status.style.display = 'block';
+    status.textContent = 'Selecciona primero el archivo .xlsx descargado de SMGR.';
+    return;
+  }
+  if (!extVieja || !extNueva) {
+    status.className = 'err'; status.style.display = 'block';
+    status.textContent = 'Escribe la extensión vieja y la nueva.';
+    return;
+  }
+
+  status.className = 'info'; status.style.display = 'block';
+  status.textContent = 'Procesando...';
+
+  try {
+    const file = fileInput.files[0];
+    const zip = await JSZip.loadAsync(file);
+
+    const pairs = [[extVieja, extNueva]];
+    const counts = await applyTextReplacements(zip, pairs);
+
+    const sets = [
+      { sheet: 'Basic', coord: 'J11', value: pass1 },
+      { sheet: 'Basic', coord: 'K11', value: pass2 },
+    ];
+    const cellReport = await applyCellSets(zip, sets);
+
+    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const outName = file.name.replace(/\.xlsx$/i, '') + '_' + extNueva.replace(/[^A-Za-z0-9_-]/g, '_') + '.xlsx';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = outName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    let msg = `Extensión "${extVieja}" -> "${extNueva}": ${counts[extVieja]} ocurrencia(s) reemplazada(s).\n`;
+    if (counts[extVieja] === 0) msg += 'AVISO: no se encontró la extensión vieja en el archivo, revisa que sea correcta.\n';
+    msg += cellReport.join('\n') + '\n\n';
+    msg += `Archivo descargado: ${outName}\nSube este archivo directo al importador de SMGR.`;
+
+    status.className = counts[extVieja] === 0 ? 'err' : 'ok';
+    status.textContent = msg;
+  } catch (err) {
+    status.className = 'err';
+    status.textContent = 'Error procesando el archivo: ' + err.message;
+    console.error(err);
+  }
+});
+</script>
+</body>
+</html>
