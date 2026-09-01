@@ -12,10 +12,16 @@
   legend { padding: 0 6px; font-weight: 600; color: #444; }
   label { display: block; margin: 10px 0 4px; font-size: 14px; font-weight: 500; }
   input[type=text], input[type=file] { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  input[readonly] { background: #f3f3f3; color: #555; }
+  .ext-display { padding: 9px 8px; border: 1px dashed #ccc; border-radius: 6px; font-size: 14px; color: #444; background: #fafafa; min-height: 18px; }
   .row { display: flex; gap: 12px; }
   .row > div { flex: 1; }
   button { margin-top: 20px; padding: 12px 22px; font-size: 15px; font-weight: 600; border: none; border-radius: 8px; background: #c8102e; color: white; cursor: pointer; }
   button:disabled { background: #ccc; cursor: default; }
+  #detectMsg { margin-top: 8px; padding: 8px 12px; border-radius: 6px; font-size: 13px; display: none; }
+  #detectMsg.ok { background: #e6f4ea; color: #1e7a34; display: block; }
+  #detectMsg.err { background: #fdeaea; color: #a11; display: block; }
+  #detectMsg.wait { background: #eef2fb; color: #345; display: block; }
   #status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 14px; white-space: pre-line; display: none; }
   #status.ok { background: #e6f4ea; color: #1e7a34; display: block; }
   #status.err { background: #fdeaea; color: #a11; display: block; }
@@ -32,20 +38,22 @@
   <legend>1. Archivo</legend>
   <label for="fileInput">Archivo .xlsx descargado de SMGR (sin editar)</label>
   <input type="file" id="fileInput" accept=".xlsx" />
+  <div id="detectMsg"></div>
 </fieldset>
 
 <fieldset>
   <legend>2. Extensión</legend>
   <div class="row">
     <div>
-      <label for="extVieja">Extensión VIEJA (la que trae el archivo)</label>
-      <input type="text" id="extVieja" placeholder="15301006" />
+      <label>Extensión VIEJA (detectada del archivo)</label>
+      <div id="extViejaDisplay" class="ext-display">Sube el archivo primero</div>
     </div>
     <div>
       <label for="extNueva">Extensión NUEVA</label>
       <input type="text" id="extNueva" placeholder="3302007" />
     </div>
   </div>
+  <small class="hint">La extensión vieja se lee sola de la hoja "Handle" del archivo, así no hay riesgo de escribirla mal.</small>
 </fieldset>
 
 <fieldset>
@@ -63,26 +71,68 @@
   <small class="hint">Se escriben en Basic!J11 y Basic!K11. Cambia estos campos si el template llega a usar otras celdas.</small>
 </fieldset>
 
-<button id="processBtn">Generar archivo para SMGR</button>
+<button id="processBtn" disabled>Generar archivo para SMGR</button>
 <div id="status"></div>
 
 <script>
 const TEXT_EXT = ['.xml', '.rels', '.vml'];
+let currentZip = null;
+let detectedExt = null;
 
 function isTextFile(name) {
   const lower = name.toLowerCase();
   return TEXT_EXT.some(ext => lower.endsWith(ext));
 }
-
 function xmlEscape(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function getSheetTarget(workbookXml, relsXml, sheetName) {
+  const sheetRe = new RegExp(`<sheet\\b[^>]*\\bname="${sheetName}"[^>]*/>`);
+  const m = workbookXml.match(sheetRe);
+  if (!m) return null;
+  const ridM = m[0].match(/r:id="([^"]+)"/);
+  if (!ridM) return null;
+  const rid = ridM[1];
+  const relRe = new RegExp(`<Relationship Id="${rid}"[^>]*Target="([^"]+)"`);
+  const m2 = relsXml.match(relRe);
+  if (!m2) return null;
+  let target = m2[1];
+  if (!target.startsWith('worksheets/')) target = 'worksheets/' + target;
+  return 'xl/' + target;
+}
+
+// --- lectura de celda (para autodetectar la extension) ---
+async function getCellValue(zip, sheetName, coord) {
+  const workbookXml = await zip.file('xl/workbook.xml').async('string');
+  const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+  const target = getSheetTarget(workbookXml, relsXml, sheetName);
+  if (!target || !zip.files[target]) return null;
+
+  const sheetXml = await zip.file(target).async('string');
+  const cellRe = new RegExp(`<c r="${coord}"([^>]*?)(?:/>|>([\\s\\S]*?)</c>)`);
+  const m = sheetXml.match(cellRe);
+  if (!m) return null;
+  const attrs = m[1];
+  const inner = m[2] || '';
+  const vMatch = inner.match(/<v>([\s\S]*?)<\/v>/);
+  if (!vMatch) return '';
+  const rawV = vMatch[1];
+
+  if (/t="s"/.test(attrs)) {
+    const idx = parseInt(rawV, 10);
+    const ssXml = await zip.file('xl/sharedStrings.xml').async('string');
+    const items = [...ssXml.matchAll(/<si>([\s\S]*?)<\/si>/g)].map(x => x[1]);
+    if (idx < 0 || idx >= items.length) return null;
+    return items[idx].replace(/<[^>]+>/g, '');
+  }
+  return rawV;
 }
 
 // --- reemplazo global de texto ---
 async function applyTextReplacements(zip, pairs) {
   const counts = {};
   pairs.forEach(([oldV]) => counts[oldV] = 0);
-
   const names = Object.keys(zip.files).filter(n => !zip.files[n].dir && isTextFile(n));
   for (const name of names) {
     let text = await zip.file(name).async('string');
@@ -100,32 +150,15 @@ async function applyTextReplacements(zip, pairs) {
   return counts;
 }
 
-// --- helpers para fijar celdas ---
-function getSheetTarget(workbookXml, relsXml, sheetName) {
-  const sheetRe = new RegExp(`<sheet\\b[^>]*\\bname="${sheetName}"[^>]*/>`);
-  const m = workbookXml.match(sheetRe);
-  if (!m) return null;
-  const ridM = m[0].match(/r:id="([^"]+)"/);
-  if (!ridM) return null;
-  const rid = ridM[1];
-  const relRe = new RegExp(`<Relationship Id="${rid}"[^>]*Target="([^"]+)"`);
-  const m2 = relsXml.match(relRe);
-  if (!m2) return null;
-  let target = m2[1];
-  if (!target.startsWith('worksheets/')) target = 'worksheets/' + target;
-  return 'xl/' + target;
-}
-
+// --- fijar valor de celda ---
 function getOrCreateSharedStringIndex(sharedStringsXml, value) {
   const items = [...sharedStringsXml.matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m => m[1]);
   const plain = items.map(it => it.replace(/<[^>]+>/g, ''));
   const existing = plain.indexOf(value);
   if (existing !== -1) return { xml: sharedStringsXml, index: existing };
-
   const newSi = `<si><t xml:space="preserve">${xmlEscape(value)}</t></si>`;
   const insertAt = sharedStringsXml.lastIndexOf('</sst>');
   let newXml = sharedStringsXml.slice(0, insertAt) + newSi + sharedStringsXml.slice(insertAt);
-
   const ucM = newXml.match(/uniqueCount="(\d+)"/);
   if (ucM) {
     const newUnique = parseInt(ucM[1], 10) + 1;
@@ -176,25 +209,65 @@ async function applyCellSets(zip, sets) {
   return report;
 }
 
+// --- autodeteccion al elegir archivo ---
+document.getElementById('fileInput').addEventListener('change', async () => {
+  const fileInput = document.getElementById('fileInput');
+  const extViejaDisplay = document.getElementById('extViejaDisplay');
+  const detectMsg = document.getElementById('detectMsg');
+  const processBtn = document.getElementById('processBtn');
+
+  extViejaDisplay.textContent = 'Sube el archivo primero';
+  detectedExt = null;
+  currentZip = null;
+  processBtn.disabled = true;
+  detectMsg.className = '';
+  detectMsg.style.display = 'none';
+
+  if (!fileInput.files.length) return;
+
+  detectMsg.className = 'wait';
+  detectMsg.textContent = 'Leyendo archivo...';
+
+  try {
+    const file = fileInput.files[0];
+    const zip = await JSZip.loadAsync(file);
+    currentZip = zip;
+
+    const val = await getCellValue(zip, 'Handle', 'B11');
+    if (!val) {
+      detectMsg.className = 'err';
+      detectMsg.textContent = 'No se pudo detectar la extensión automáticamente (la hoja "Handle" no trae el formato esperado en B11). Verifica que sea el archivo crudo correcto.';
+      return;
+    }
+    detectedExt = val;
+    extViejaDisplay.textContent = val;
+    detectMsg.className = 'ok';
+    detectMsg.textContent = `Extensión detectada: ${val}`;
+    processBtn.disabled = false;
+  } catch (err) {
+    detectMsg.className = 'err';
+    detectMsg.textContent = 'Error leyendo el archivo: ' + err.message;
+    console.error(err);
+  }
+});
+
 document.getElementById('processBtn').addEventListener('click', async () => {
   const status = document.getElementById('status');
-  status.className = '';
-  status.style.display = 'none';
+  status.className = ''; status.style.display = 'none';
 
   const fileInput = document.getElementById('fileInput');
-  const extVieja = document.getElementById('extVieja').value.trim();
   const extNueva = document.getElementById('extNueva').value.trim();
   const pass1 = document.getElementById('pass1').value;
   const pass2 = document.getElementById('pass2').value;
 
-  if (!fileInput.files.length) {
+  if (!currentZip || !detectedExt) {
     status.className = 'err'; status.style.display = 'block';
-    status.textContent = 'Selecciona primero el archivo .xlsx descargado de SMGR.';
+    status.textContent = 'Sube primero el archivo y espera a que detecte la extensión.';
     return;
   }
-  if (!extVieja || !extNueva) {
+  if (!extNueva) {
     status.className = 'err'; status.style.display = 'block';
-    status.textContent = 'Escribe la extensión vieja y la nueva.';
+    status.textContent = 'Escribe la extensión nueva.';
     return;
   }
 
@@ -203,9 +276,9 @@ document.getElementById('processBtn').addEventListener('click', async () => {
 
   try {
     const file = fileInput.files[0];
-    const zip = await JSZip.loadAsync(file);
+    const zip = currentZip;
 
-    const pairs = [[extVieja, extNueva]];
+    const pairs = [[detectedExt, extNueva]];
     const counts = await applyTextReplacements(zip, pairs);
 
     const sets = [
@@ -223,12 +296,11 @@ document.getElementById('processBtn').addEventListener('click', async () => {
     a.click();
     a.remove();
 
-    let msg = `Extensión "${extVieja}" -> "${extNueva}": ${counts[extVieja]} ocurrencia(s) reemplazada(s).\n`;
-    if (counts[extVieja] === 0) msg += 'AVISO: no se encontró la extensión vieja en el archivo, revisa que sea correcta.\n';
+    let msg = `Extensión "${detectedExt}" -> "${extNueva}": ${counts[detectedExt]} ocurrencia(s) reemplazada(s).\n`;
     msg += cellReport.join('\n') + '\n\n';
     msg += `Archivo descargado: ${outName}\nSube este archivo directo al importador de SMGR.`;
 
-    status.className = counts[extVieja] === 0 ? 'err' : 'ok';
+    status.className = 'ok';
     status.textContent = msg;
   } catch (err) {
     status.className = 'err';
